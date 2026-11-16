@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cronograma de Renovación de Equipos 2026 · La Tablita Group</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pulse-dot { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: #0f172a; }
+  .tbl-wrap { max-height: 560px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<!-- ===== Header ===== -->
+<header class="bg-slate-900 text-white">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div>
+      <p class="text-xs uppercase tracking-widest text-amber-400 font-semibold">La Tablita Group · Sistemas</p>
+      <h1 class="text-xl sm:text-2xl font-bold">Cronograma de Renovación de Equipos 2026</h1>
+      <p class="text-sm text-slate-400">Dashboard gerencial en tiempo real</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-3">
+      <div id="connStatus" class="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium bg-slate-700 text-slate-200">
+        <span id="connDot" class="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+        <span id="connText">Conectando…</span>
+      </div>
+      <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+        <input id="autoRefresh" type="checkbox" class="accent-amber-500 w-4 h-4">
+        Auto (cada 5 min)
+      </label>
+      <button id="btnRefresh" class="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold px-4 py-2 rounded-lg shadow transition disabled:opacity-60">
+        <svg id="refreshIcon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h5M20 20v-5h-5M5.1 15A7 7 0 0 0 18.4 17M18.9 9A7 7 0 0 0 5.6 7"/></svg>
+        Actualizar Datos
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+  <p id="lastSync" class="text-xs text-slate-500 -mb-3">Última sincronización: —</p>
+
+  <!-- Error banner -->
+  <div id="errorBanner" class="hidden bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-3 text-sm"></div>
+
+  <!-- ===== KPIs ===== -->
+  <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="bg-white rounded-xl shadow-sm p-5 border-l-4 border-sky-500">
+      <p class="text-xs font-semibold uppercase text-slate-500">Total Sedes / Localidades</p>
+      <p id="kpiSedes" class="text-3xl font-bold mt-1">—</p>
+      <p id="kpiSedesSub" class="text-xs text-slate-400 mt-1">&nbsp;</p>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5 border-l-4 border-indigo-500">
+      <p class="text-xs font-semibold uppercase text-slate-500">Equipos a Renovar</p>
+      <p id="kpiEquipos" class="text-3xl font-bold mt-1">—</p>
+      <p id="kpiEquiposSub" class="text-xs text-slate-400 mt-1">&nbsp;</p>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5 border-l-4 border-emerald-500">
+      <p class="text-xs font-semibold uppercase text-slate-500">Equipos Completados</p>
+      <p id="kpiCompletados" class="text-3xl font-bold mt-1">—</p>
+      <p id="kpiCompletadosSub" class="text-xs text-slate-400 mt-1">&nbsp;</p>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5 border-l-4 border-amber-500">
+      <p class="text-xs font-semibold uppercase text-slate-500">Avance Global</p>
+      <p id="kpiAvance" class="text-3xl font-bold mt-1">—</p>
+      <div class="w-full bg-slate-200 rounded-full h-2 mt-2"><div id="kpiAvanceBar" class="bg-amber-500 h-2 rounded-full transition-all duration-700" style="width:0%"></div></div>
+    </div>
+  </section>
+
+  <!-- ===== Filtros ===== -->
+  <section class="bg-white rounded-xl shadow-sm p-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+      <div class="lg:col-span-2">
+        <label class="block text-xs font-semibold text-slate-500 mb-1" for="fSearch">Búsqueda rápida</label>
+        <input id="fSearch" type="search" placeholder="Buscar por localidad o ID…" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1" for="fRegion">Región</label>
+        <select id="fRegion" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+          <option value="">Todas</option><option>Sierra</option><option>Costa</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1" for="fEstado">Estado</label>
+        <select id="fEstado" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+          <option value="">Todos</option><option>Pendiente</option><option>En Proceso</option><option>Completado</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1" for="fResp">Responsable</label>
+        <select id="fResp" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+          <option value="">Todos</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex justify-between items-center mt-3 text-xs text-slate-500">
+      <span id="filterInfo">—</span>
+      <button id="btnClear" class="text-amber-700 hover:underline font-medium">Limpiar filtros</button>
+    </div>
+  </section>
+
+  <!-- ===== Gráficos ===== -->
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="bg-white rounded-xl shadow-sm p-5 lg:col-span-2">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 class="font-semibold">Equipos por <span id="barTitle">Región</span></h2>
+        <div class="inline-flex rounded-lg border border-slate-300 overflow-hidden text-sm">
+          <button data-group="region" class="grpBtn px-3 py-1.5 bg-slate-800 text-white">Región</button>
+          <button data-group="resp" class="grpBtn px-3 py-1.5 bg-white text-slate-700 hover:bg-slate-50">Responsable</button>
+        </div>
+      </div>
+      <div class="relative h-72"><canvas id="barChart"></canvas></div>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5">
+      <h2 class="font-semibold mb-3">Proporción de estados <span class="text-xs font-normal text-slate-400">(sedes)</span></h2>
+      <div class="relative h-72"><canvas id="doughnutChart"></canvas></div>
+    </div>
+  </section>
+
+  <!-- ===== Tabla ===== -->
+  <section class="bg-white rounded-xl shadow-sm">
+    <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+      <h2 class="font-semibold">Detalle por sede</h2>
+      <span id="tableCount" class="text-xs text-slate-500"></span>
+    </div>
+    <div class="tbl-wrap overflow-auto">
+      <table class="min-w-full text-sm">
+        <thead id="tblHead" class="bg-slate-50 text-slate-600 text-xs uppercase sticky top-0 z-10"></thead>
+        <tbody id="tblBody" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="text-center text-xs text-slate-400 pb-4">Fuente: Excel en OneDrive → Power Automate → JSON · La Tablita Group</footer>
+</main>
+
+<script>
+/* ================= Configuración ================= */
+const DATA_URL = "https://gist.githubusercontent.com/SamkisDQ/886dc7c643888b670b163cce0acc0796/raw/cronograma.json";
+const FETCH_TIMEOUT_MS = 15000;
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
+
+const ESTADOS = ["Pendiente", "En Proceso", "Completado"];
+const ESTADO_COLOR = { "Pendiente": "#f59e0b", "En Proceso": "#3b82f6", "Completado": "#10b981", "Otro": "#94a3b8" };
+const ESTADO_BADGE = {
+  "Pendiente":  "bg-amber-100 text-amber-800 ring-amber-300",
+  "En Proceso": "bg-blue-100 text-blue-800 ring-blue-300",
+  "Completado": "bg-emerald-100 text-emerald-800 ring-emerald-300",
+  "Otro":       "bg-slate-100 text-slate-700 ring-slate-300"
+};
+
+/* Columnas que se muestran en la tabla (en este orden) */
+const COLS = [
+  { key: "id",        label: "ID" },
+  { key: "actividad", label: "Actividad" },
+  { key: "localidad", label: "Localidad" },
+  { key: "ciudad",    label: "Ciudad" },
+  { key: "region",    label: "Región" },
+  { key: "equipos",   label: "Equipos / Cajas" },   // viene de "# CAJAS" / "_x0023_ CAJAS"
+  { key: "resp",      label: "Encargado" },          // viene de la columna que empieza por "ENCARGADO"
+  { key: "fecha",     label: "Fecha" },
+  { key: "estado",    label: "Estado" }
+];
+
+/* Alias de columnas del Excel (ya normalizados: minúsculas, sin tildes, espacios ni símbolos) */
+const ALIAS_MAP = {
+  id: "id", codigo: "id", cod: "id", nro: "id", numero: "id",
+  actividad: "actividad",
+  localidad: "localidad", sede: "localidad", local: "localidad",
+  ciudad: "ciudad",
+  region: "region",
+  fecha: "fecha", fechaprogramada: "fecha",
+  estado: "estado", status: "estado",
+  // Columnas antiguas (se leen solo como respaldo, no se muestran)
+  equipos: "equiposOld", respprog: "respprog", respreal: "respreal"
+};
+
+/* Resuelve el nombre de columna del Excel a una clave interna */
+function canonKey(rawKey) {
+  const nk = normKey(rawKey);
+  if (nk.startsWith("encargado")) return "encargado";
+  // "# CAJAS" -> "cajas"; "_X0023_ CAJAS" (# codificado por Power Automate) -> "x0023cajas"
+  if (nk === "cajas" || nk.endsWith("cajas") || /^x0023/.test(nk) && nk.includes("caja")) return "cajas";
+  return ALIAS_MAP[nk];
+}
+
+/* Entero seguro: vacío, null o texto no numérico => 0 */
+function toInt(v) {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === "number") return isFinite(v) ? Math.trunc(v) : 0;
+  const s = String(v).trim();
+  if (!s) return 0;
+  const n = parseFloat(s.replace(",", ".").replace(/[^\d.\-]/g, ""));
+  return isFinite(n) ? Math.trunc(n) : 0;
+}
+
+/* ================= Estado de la app ================= */
+let RAW = [];          // filas limpias
+let EXTRA_COLS = [];   // columnas no reconocidas (se muestran igual)
+let groupBy = "region";
+let sortKey = "id", sortDir = 1;
+let barChart, doughnutChart, autoTimer = null, loading = false;
+
+/* ================= Utilidades de limpieza ================= */
+const normKey = k => String(k).normalize("NFD").replace(/[̀-ͯ]/g, "")
+  .toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const isMetaKey = k => {
+  const s = String(k);
+  return s.startsWith("@odata") || s.startsWith("@") || /^iteminternalid$/i.test(s.replace(/\s/g, "")) || /odata/i.test(s);
+};
+
+const cleanStr = v => (v === null || v === undefined) ? "" : String(v).replace(/\s+/g, " ").trim();
+
+function toNumber(v) {
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  const s = cleanStr(v).replace(/[^\d,.\-]/g, "").replace(",", ".");
+  const n = parseFloat(s);
+  return isFinite(n) ? n : 0;
+}
+
+function normEstado(v) {
+  const s = normKey(v);
+  if (!s) return "Pendiente";
+  if (s.startsWith("complet") || s.startsWith("finaliz") || s.startsWith("termin") || s === "ok" || s.startsWith("listo") || s.startsWith("hecho")) return "Completado";
+  if (s.includes("proceso") || s.includes("curso") || s.startsWith("inici") || s.startsWith("ejecu") || s.startsWith("progres")) return "En Proceso";
+  if (s.startsWith("pend") || s.startsWith("program") || s.startsWith("porhacer") || s.startsWith("noinici")) return "Pendiente";
+  return cleanStr(v);
+}
+
+function normRegion(v) {
+  const s = normKey(v);
+  if (s.startsWith("sierra")) return "Sierra";
+  if (s.startsWith("costa")) return "Costa";
+  const c = cleanStr(v);
+  return c ? c.charAt(0).toUpperCase() + c.slice(1) : "Sin región";
+}
+
+/* Fecha: soporta serial de Excel, ISO y dd/mm/aaaa */
+function parseFecha(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const s = cleanStr(v);
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = parseFloat(s);
+    if (n > 20000 && n < 80000) return new Date(Math.round((n - 25569) * 86400 * 1000));
+  }
+  let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (m) {
+    let y = +m[3]; if (y < 100) y += 2000;
+    return new Date(Date.UTC(y, +m[2] - 1, +m[1]));
+  }
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+const fmtFecha = d => d ? d.toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }) : "";
+
+/* Extrae el arreglo de filas sin importar la envoltura de Power Automate */
+function extractRows(json) {
+  if (Array.isArray(json)) return json;
+  if (json && typeof json === "object") {
+    for (const k of ["value", "body", "rows", "data", "items", "result", "results"]) {
+      if (json[k] !== undefined) {
+        const inner = extractRows(json[k]);
+        if (inner.length) return inner;
+      }
+    }
+    const arr = Object.values(json).find(Array.isArray);
+    if (arr) return arr;
+  }
+  return [];
+}
+
+function cleanRow(obj) {
+  const out = { _extra: {} };
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (isMetaKey(k)) continue;
+    const canon = canonKey(k);
+    if (canon) {
+      if (out[canon] === undefined || out[canon] === "") out[canon] = v;
+    } else {
+      out._extra[cleanStr(k)] = cleanStr(v);
+    }
+  }
+  const fechaDate = parseFecha(out.fecha);
+  // Equipos = "# CAJAS" (entero, vacío = 0). Solo si esa columna no existe se usa la antigua "EQUIPOS".
+  const equipos = ("cajas" in out) ? toInt(out.cajas) : toInt(out.equiposOld);
+  // Responsable = columna "ENCARGADO…". Respaldo: Resp. Real / Resp. Prog. si no existiera.
+  const resp = cleanStr(out.encargado) || cleanStr(out.respreal) || cleanStr(out.respprog);
+  return {
+    id: cleanStr(out.id),
+    actividad: cleanStr(out.actividad),
+    localidad: cleanStr(out.localidad),
+    ciudad: cleanStr(out.ciudad),
+    region: normRegion(out.region),
+    equipos,
+    resp,
+    fechaDate,
+    fecha: fechaDate ? fmtFecha(fechaDate) : cleanStr(out.fecha),
+    estado: normEstado(out.estado),
+    _extra: out._extra
+  };
+}
+
+/* ================= Conexión ================= */
+function setStatus(kind, text) {
+  const box = document.getElementById("connStatus");
+  const dot = document.getElementById("connDot");
+  const map = {
+    ok:      ["bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40", "bg-emerald-400 pulse-dot"],
+    loading: ["bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40", "bg-amber-400 pulse-dot"],
+    error:   ["bg-red-500/20 text-red-300 ring-1 ring-red-500/50", "bg-red-500"]
+  }[kind];
+  box.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium " + map[0];
+  dot.className = "w-2.5 h-2.5 rounded-full " + map[1];
+  document.getElementById("connText").textContent = text;
+}
+
+async function loadData() {
+  if (loading) return;
+  loading = true;
+  const btn = document.getElementById("btnRefresh");
+  btn.disabled = true;
+  document.getElementById("refreshIcon").classList.add("spin");
+  setStatus("loading", "Sincronizando…");
+
+  const ctrl = new AbortController();
+  const slowTimer = setTimeout(() => setStatus("loading", "Conexión lenta, esperando…"), 5000);
+  const killTimer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: "no-store", signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text.replace(/^﻿/, "")); }
+    catch { throw new Error("La respuesta no es un JSON válido"); }
+
+    const rows = extractRows(json).filter(r => r && typeof r === "object").map(cleanRow)
+      .filter(r => r.id || r.localidad || r.equipos);
+
+    RAW = rows;
+    const extras = new Set();
+    rows.forEach(r => Object.keys(r._extra).forEach(k => extras.add(k)));
+    EXTRA_COLS = [...extras];
+
+    populateRespFilter();
+    renderAll();
+    setStatus("ok", "Sincronizado en vivo con OneDrive");
+    document.getElementById("errorBanner").classList.add("hidden");
+    document.getElementById("lastSync").textContent =
+      `Última sincronización: ${new Date().toLocaleString("es-EC")} · ${rows.length} registros`;
+  } catch (err) {
+    const msg = err.name === "AbortError" ? `Tiempo de espera agotado (${FETCH_TIMEOUT_MS / 1000}s)` : err.message;
+    setStatus("error", "Error de conexión");
+    const banner = document.getElementById("errorBanner");
+    banner.textContent = `No se pudo obtener el cronograma: ${msg}. ` +
+      (RAW.length ? "Se muestran los últimos datos cargados." : "Verifica tu conexión y presiona «Actualizar Datos».");
+    banner.classList.remove("hidden");
+  } finally {
+    clearTimeout(slowTimer); clearTimeout(killTimer);
+    loading = false;
+    btn.disabled = false;
+    document.getElementById("refreshIcon").classList.remove("spin");
+  }
+}
+
+/* ================= Filtros ================= */
+function populateRespFilter() {
+  const sel = document.getElementById("fResp");
+  const current = sel.value;
+  const names = new Set();
+  RAW.forEach(r => { if (r.resp) names.add(r.resp); });
+  sel.innerHTML = '<option value="">Todos</option>';
+  [...names].sort((a, b) => a.localeCompare(b, "es")).forEach(n => {
+    const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o);
+  });
+  if ([...names].includes(current)) sel.value = current;
+
+  // Agrega regiones no previstas (si existieran)
+  const rSel = document.getElementById("fRegion");
+  const have = new Set([...rSel.options].map(o => o.value));
+  [...new Set(RAW.map(r => r.region))].forEach(r => {
+    if (!have.has(r)) { const o = document.createElement("option"); o.value = r; o.textContent = r; rSel.appendChild(o); }
+  });
+}
+
+function getFiltered() {
+  const q = normKey(document.getElementById("fSearch").value);
+  const reg = document.getElementById("fRegion").value;
+  const est = document.getElementById("fEstado").value;
+  const resp = document.getElementById("fResp").value;
+  return RAW.filter(r =>
+    (!reg || r.region === reg) &&
+    (!est || r.estado === est) &&
+    (!resp || r.resp === resp) &&
+    (!q || normKey(r.localidad).includes(q) || normKey(r.id).includes(q) || normKey(r.ciudad).includes(q))
+  );
+}
+
+/* ================= Render ================= */
+const fmtInt = n => Math.round(n).toLocaleString("es-EC");
+
+function renderAll() {
+  const data = getFiltered();
+  renderKPIs(data);
+  renderCharts(data);
+  renderTable(data);
+  const f = data.length !== RAW.length;
+  document.getElementById("filterInfo").textContent = f
+    ? `Mostrando ${data.length} de ${RAW.length} sedes (filtros activos)`
+    : `Mostrando las ${RAW.length} sedes`;
+}
+
+function renderKPIs(data) {
+  const sedes = new Set(data.map(r => normKey(r.localidad) || r.id)).size;
+  const total = data.reduce((s, r) => s + r.equipos, 0);
+  const comp = data.filter(r => r.estado === "Completado").reduce((s, r) => s + r.equipos, 0);
+  const proc = data.filter(r => r.estado === "En Proceso").reduce((s, r) => s + r.equipos, 0);
+  const pct = total ? (comp / total) * 100 : 0;
+  const sedesComp = data.filter(r => r.estado === "Completado").length;
+
+  document.getElementById("kpiSedes").textContent = fmtInt(sedes);
+  document.getElementById("kpiSedesSub").textContent = `${sedesComp} sedes completadas`;
+  document.getElementById("kpiEquipos").textContent = fmtInt(total);
+  document.getElementById("kpiEquiposSub").textContent = `${fmtInt(proc)} en proceso`;
+  document.getElementById("kpiCompletados").textContent = fmtInt(comp);
+  document.getElementById("kpiCompletadosSub").textContent = `${fmtInt(total - comp)} restantes`;
+  document.getElementById("kpiAvance").textContent = pct.toFixed(1) + "%";
+  document.getElementById("kpiAvanceBar").style.width = Math.min(pct, 100) + "%";
+}
+
+function renderCharts(data) {
+  if (typeof Chart === "undefined") return;
+
+  // --- Barras apiladas por estado ---
+  const keyFn = groupBy === "region" ? r => r.region : r => (r.resp || "Sin asignar");
+  const groups = [...new Set(data.map(keyFn))].sort((a, b) => a.localeCompare(b, "es"));
+  const estadosPresentes = [...ESTADOS, ...new Set(data.map(r => r.estado).filter(e => !ESTADOS.includes(e)))];
+  const datasets = estadosPresentes.map(est => ({
+    label: est,
+    data: groups.map(g => data.filter(r => keyFn(r) === g && r.estado === est).reduce((s, r) => s + r.equipos, 0)),
+    backgroundColor: ESTADO_COLOR[est] || ESTADO_COLOR.Otro,
+    borderRadius: 4, maxBarThickness: 56
+  })).filter(ds => ds.data.some(v => v > 0));
+
+  const barCfg = {
+    type: "bar",
+    data: { labels: groups, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      indexAxis: groupBy === "resp" && groups.length > 6 ? "y" : "x",
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 8 } },
+        tooltip: { callbacks: { footer: items => "Total: " + fmtInt(items.reduce((s, i) => s + i.parsed[groupBy === "resp" && groups.length > 6 ? "x" : "y"], 0)) + " equipos" } }
+      },
+      scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, grid: { color: "#e2e8f0" } } }
+    }
+  };
+  if (barChart) barChart.destroy();
+  barChart = new Chart(document.getElementById("barChart"), barCfg);
+
+  // --- Doughnut de estados ---
+  const counts = estadosPresentes.map(e => data.filter(r => r.estado === e).length);
+  const eqs = estadosPresentes.map(e => data.filter(r => r.estado === e).reduce((s, r) => s + r.equipos, 0));
+  const totalSedes = counts.reduce((a, b) => a + b, 0);
+  const dCfg = {
+    type: "doughnut",
+    data: {
+      labels: estadosPresentes,
+      datasets: [{ data: counts, backgroundColor: estadosPresentes.map(e => ESTADO_COLOR[e] || ESTADO_COLOR.Otro), borderWidth: 2, borderColor: "#fff" }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "62%",
+      plugins: {
+        legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 8 } },
+        tooltip: { callbacks: { label: c => {
+          const pct = totalSedes ? (c.raw / totalSedes * 100).toFixed(1) : 0;
+          return ` ${c.label}: ${c.raw} sedes (${pct}%) · ${fmtInt(eqs[c.dataIndex])} equipos`;
+        } } }
+      },
+      onClick: (_, els) => {
+        if (!els.length) return;
+        const est = estadosPresentes[els[0].index];
+        const sel = document.getElementById("fEstado");
+        sel.value = sel.value === est ? "" : est;
+        renderAll();
+      }
+    }
+  };
+  if (doughnutChart) doughnutChart.destroy();
+  doughnutChart = new Chart(document.getElementById("doughnutChart"), dCfg);
+}
+
+function tableColumns() {
+  // Solo las columnas reales del Excel; las antiguas/vacías (EQUIPOS, RESP. PROG., RESP. REAL) y metadatos quedan ocultas
+  return COLS.map(c => ({ key: c.key, label: c.label }));
+}
+
+function cellValue(r, key) {
+  if (key.startsWith("x:")) return r._extra[key.slice(2)] ?? "";
+  return r[key];
+}
+
+function sortValue(r, key) {
+  if (key === "fecha") return r.fechaDate ? r.fechaDate.getTime() : Infinity;
+  if (key === "equipos") return r.equipos;
+  if (key === "id") { const n = parseFloat(r.id); return isNaN(n) ? r.id : n; }
+  return String(cellValue(r, key) ?? "").toLowerCase();
+}
+
+function renderTable(data) {
+  const cols = tableColumns();
+  const head = document.getElementById("tblHead");
+  head.innerHTML = "";
+  const tr = document.createElement("tr");
+  cols.forEach(c => {
+    const th = document.createElement("th");
+    th.className = "sortable px-4 py-3 text-left font-semibold whitespace-nowrap" + (c.key === "equipos" ? " text-right" : "");
+    th.textContent = c.label + (sortKey === c.key ? (sortDir > 0 ? " ▲" : " ▼") : "");
+    th.onclick = () => { if (sortKey === c.key) sortDir *= -1; else { sortKey = c.key; sortDir = 1; } renderTable(getFiltered()); };
+    tr.appendChild(th);
+  });
+  head.appendChild(tr);
+
+  const sorted = [...data].sort((a, b) => {
+    const va = sortValue(a, sortKey), vb = sortValue(b, sortKey);
+    if (typeof va === "number" && typeof vb === "number") return (va - vb) * sortDir;
+    return String(va).localeCompare(String(vb), "es", { numeric: true }) * sortDir;
+  });
+
+  const body = document.getElementById("tblBody");
+  body.innerHTML = "";
+  if (!sorted.length) {
+    const r = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "px-4 py-10 text-center text-slate-400";
+    td.textContent = RAW.length ? "Ninguna sede coincide con los filtros." : "Sin datos cargados.";
+    r.appendChild(td); body.appendChild(r);
+  }
+  sorted.forEach(r => {
+    const row = document.createElement("tr");
+    row.className = "hover:bg-amber-50/60";
+    cols.forEach(c => {
+      const td = document.createElement("td");
+      td.className = "px-4 py-2.5 whitespace-nowrap";
+      if (c.key === "estado") {
+        const span = document.createElement("span");
+        span.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 " + (ESTADO_BADGE[r.estado] || ESTADO_BADGE.Otro);
+        const dot = document.createElement("span");
+        dot.className = "w-1.5 h-1.5 rounded-full";
+        dot.style.background = ESTADO_COLOR[r.estado] || ESTADO_COLOR.Otro;
+        span.appendChild(dot);
+        span.appendChild(document.createTextNode(r.estado));
+        td.appendChild(span);
+      } else if (c.key === "equipos") {
+        td.className += " text-right font-semibold tabular-nums";
+        td.textContent = fmtInt(r.equipos);
+      } else if (c.key === "region") {
+        td.textContent = r.region;
+        td.className += r.region === "Sierra" ? " text-indigo-700" : r.region === "Costa" ? " text-cyan-700" : "";
+      } else if (c.key === "localidad") {
+        td.className += " font-medium text-slate-900";
+        td.textContent = r.localidad;
+      } else {
+        td.textContent = cellValue(r, c.key) ?? "";
+      }
+      row.appendChild(td);
+    });
+    body.appendChild(row);
+  });
+  const total = sorted.reduce((s, r) => s + r.equipos, 0);
+  document.getElementById("tableCount").textContent = `${sorted.length} sedes · ${fmtInt(total)} equipos`;
+}
+
+/* ================= Eventos ================= */
+document.getElementById("btnRefresh").addEventListener("click", loadData);
+["fRegion", "fEstado", "fResp"].forEach(id => document.getElementById(id).addEventListener("change", renderAll));
+let searchT;
+document.getElementById("fSearch").addEventListener("input", () => { clearTimeout(searchT); searchT = setTimeout(renderAll, 150); });
+document.getElementById("btnClear").addEventListener("click", () => {
+  ["fSearch", "fRegion", "fEstado", "fResp"].forEach(id => document.getElementById(id).value = "");
+  renderAll();
+});
+document.querySelectorAll(".grpBtn").forEach(b => b.addEventListener("click", () => {
+  groupBy = b.dataset.group;
+  document.getElementById("barTitle").textContent = groupBy === "region" ? "Región" : "Responsable";
+  document.querySelectorAll(".grpBtn").forEach(x => x.className = "grpBtn px-3 py-1.5 " +
+    (x === b ? "bg-slate-800 text-white" : "bg-white text-slate-700 hover:bg-slate-50"));
+  renderCharts(getFiltered());
+}));
+document.getElementById("autoRefresh").addEventListener("change", e => {
+  clearInterval(autoTimer);
+  if (e.target.checked) autoTimer = setInterval(loadData, AUTO_REFRESH_MS);
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && document.getElementById("autoRefresh").checked) loadData();
+});
+
+loadData();
+</script>
+</body>
+</html>
