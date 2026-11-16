@@ -14,7 +14,7 @@
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
   th.sortable { cursor: pointer; user-select: none; }
   th.sortable:hover { color: #0f172a; }
-  .tbl-wrap { max-height: 560px; }
+  .tbl-wrap { max-height: 600px; }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen">
@@ -46,7 +46,10 @@
 
 <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-  <p id="lastSync" class="text-xs text-slate-500 -mb-3">Última sincronización: —</p>
+  <div class="-mb-3 space-y-0.5">
+    <p id="lastSync" class="text-xs text-slate-500">Última sincronización: —</p>
+    <p id="detectedCols" class="text-xs text-slate-400"></p>
+  </div>
 
   <!-- Error banner -->
   <div id="errorBanner" class="hidden bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-3 text-sm"></div>
@@ -80,18 +83,18 @@
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
       <div class="lg:col-span-2">
         <label class="block text-xs font-semibold text-slate-500 mb-1" for="fSearch">Búsqueda rápida</label>
-        <input id="fSearch" type="search" placeholder="Buscar por localidad o ID…" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+        <input id="fSearch" type="search" placeholder="Buscar en todas las columnas…" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
       </div>
       <div>
         <label class="block text-xs font-semibold text-slate-500 mb-1" for="fRegion">Región</label>
         <select id="fRegion" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
-          <option value="">Todas</option><option>Sierra</option><option>Costa</option>
+          <option value="">Todas</option>
         </select>
       </div>
       <div>
         <label class="block text-xs font-semibold text-slate-500 mb-1" for="fEstado">Estado</label>
         <select id="fEstado" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
-          <option value="">Todos</option><option>Pendiente</option><option>En Proceso</option><option>Completado</option>
+          <option value="">Todos</option>
         </select>
       </div>
       <div>
@@ -101,9 +104,15 @@
         </select>
       </div>
     </div>
-    <div class="flex justify-between items-center mt-3 text-xs text-slate-500">
+    <div class="flex flex-wrap gap-2 justify-between items-center mt-3 text-xs text-slate-500">
       <span id="filterInfo">—</span>
-      <button id="btnClear" class="text-amber-700 hover:underline font-medium">Limpiar filtros</button>
+      <div class="flex items-center gap-4">
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input id="hideEmpty" type="checkbox" checked class="accent-amber-500">
+          Ocultar columnas vacías
+        </label>
+        <button id="btnClear" class="text-amber-700 hover:underline font-medium">Limpiar filtros</button>
+      </div>
     </div>
   </section>
 
@@ -125,7 +134,7 @@
     </div>
   </section>
 
-  <!-- ===== Tabla ===== -->
+  <!-- ===== Tabla dinámica ===== -->
   <section class="bg-white rounded-xl shadow-sm">
     <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
       <h2 class="font-semibold">Detalle por sede</h2>
@@ -148,88 +157,70 @@ const DATA_URL = "https://gist.githubusercontent.com/SamkisDQ/886dc7c643888b670b
 const FETCH_TIMEOUT_MS = 15000;
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 
-const ESTADOS = ["Pendiente", "En Proceso", "Completado"];
-const ESTADO_COLOR = { "Pendiente": "#f59e0b", "En Proceso": "#3b82f6", "Completado": "#10b981", "Otro": "#94a3b8" };
+/* Palabras clave para la detección flexible (se comparan sin mayúsculas, tildes ni símbolos) */
+const KW = {
+  qty:    ["cajas", "equipos", "cantidad"],
+  region: ["region"],
+  estado: ["estado"],
+  resp:   ["encargado", "responsable"],
+  sede:   ["localidad", "sede", "local"],
+  fecha:  ["fecha"]
+};
+
+const ESTADOS = ["Pendiente", "En Proceso", "Completado", "Reprogramado"];
+const ESTADO_COLOR = { "Pendiente": "#f59e0b", "En Proceso": "#3b82f6", "Completado": "#10b981", "Reprogramado": "#8b5cf6", "Otro": "#94a3b8" };
 const ESTADO_BADGE = {
-  "Pendiente":  "bg-amber-100 text-amber-800 ring-amber-300",
-  "En Proceso": "bg-blue-100 text-blue-800 ring-blue-300",
-  "Completado": "bg-emerald-100 text-emerald-800 ring-emerald-300",
-  "Otro":       "bg-slate-100 text-slate-700 ring-slate-300"
+  "Pendiente":    "bg-amber-100 text-amber-800 ring-amber-300",
+  "En Proceso":   "bg-blue-100 text-blue-800 ring-blue-300",
+  "Completado":   "bg-emerald-100 text-emerald-800 ring-emerald-300",
+  "Reprogramado": "bg-violet-100 text-violet-800 ring-violet-300",
+  "Otro":         "bg-slate-100 text-slate-700 ring-slate-300"
 };
-
-/* Columnas que se muestran en la tabla (en este orden) */
-const COLS = [
-  { key: "id",        label: "ID" },
-  { key: "actividad", label: "Actividad" },
-  { key: "localidad", label: "Localidad" },
-  { key: "ciudad",    label: "Ciudad" },
-  { key: "region",    label: "Región" },
-  { key: "equipos",   label: "Equipos / Cajas" },   // viene de "# CAJAS" / "_x0023_ CAJAS"
-  { key: "resp",      label: "Encargado" },          // viene de la columna que empieza por "ENCARGADO"
-  { key: "fecha",     label: "Fecha" },
-  { key: "estado",    label: "Estado" }
-];
-
-/* Alias de columnas del Excel (ya normalizados: minúsculas, sin tildes, espacios ni símbolos) */
-const ALIAS_MAP = {
-  id: "id", codigo: "id", cod: "id", nro: "id", numero: "id",
-  actividad: "actividad",
-  localidad: "localidad", sede: "localidad", local: "localidad",
-  ciudad: "ciudad",
-  region: "region",
-  fecha: "fecha", fechaprogramada: "fecha",
-  estado: "estado", status: "estado",
-  // Columnas antiguas (se leen solo como respaldo, no se muestran)
-  equipos: "equiposOld", respprog: "respprog", respreal: "respreal"
-};
-
-/* Resuelve el nombre de columna del Excel a una clave interna */
-function canonKey(rawKey) {
-  const nk = normKey(rawKey);
-  if (nk.startsWith("encargado")) return "encargado";
-  // "# CAJAS" -> "cajas"; "_X0023_ CAJAS" (# codificado por Power Automate) -> "x0023cajas"
-  if (nk === "cajas" || nk.endsWith("cajas") || /^x0023/.test(nk) && nk.includes("caja")) return "cajas";
-  return ALIAS_MAP[nk];
-}
-
-/* Entero seguro: vacío, null o texto no numérico => 0 */
-function toInt(v) {
-  if (v === null || v === undefined) return 0;
-  if (typeof v === "number") return isFinite(v) ? Math.trunc(v) : 0;
-  const s = String(v).trim();
-  if (!s) return 0;
-  const n = parseFloat(s.replace(",", ".").replace(/[^\d.\-]/g, ""));
-  return isFinite(n) ? Math.trunc(n) : 0;
-}
 
 /* ================= Estado de la app ================= */
-let RAW = [];          // filas limpias
-let EXTRA_COLS = [];   // columnas no reconocidas (se muestran igual)
+let ROWS = [];     // [{ cells: {colKey: textoVisible}, _qty, _estado, _region, _resp, _sede, _search }]
+let COLUMNS = [];  // [{ key: nombreOriginal, label: encabezadoLimpio, isEstado, isNumeric, isEmpty }]
+let MAP = {};      // columnas detectadas: { qty, region, estado, resp, sede, fecha } -> key original
 let groupBy = "region";
-let sortKey = "id", sortDir = 1;
+let sortKey = null, sortDir = 1;
 let barChart, doughnutChart, autoTimer = null, loading = false;
 
-/* ================= Utilidades de limpieza ================= */
-const normKey = k => String(k).normalize("NFD").replace(/[̀-ͯ]/g, "")
+/* ================= Utilidades ================= */
+const normKey = k => String(k ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "")
   .toLowerCase().replace(/[^a-z0-9]/g, "");
-
-const isMetaKey = k => {
-  const s = String(k);
-  return s.startsWith("@odata") || s.startsWith("@") || /^iteminternalid$/i.test(s.replace(/\s/g, "")) || /odata/i.test(s);
-};
 
 const cleanStr = v => (v === null || v === undefined) ? "" : String(v).replace(/\s+/g, " ").trim();
 
-function toNumber(v) {
-  if (typeof v === "number") return isFinite(v) ? v : 0;
-  const s = cleanStr(v).replace(/[^\d,.\-]/g, "").replace(",", ".");
-  const n = parseFloat(s);
-  return isFinite(n) ? n : 0;
+/* Columnas técnicas de Excel / Power Automate que nunca se muestran */
+function isMetaKey(k) {
+  const s = String(k).trim();
+  return s.startsWith("@") || /odata/i.test(s) || /^iteminternalid$/i.test(s.replace(/\s/g, "")) || /^__/.test(s);
 }
+
+/* Encabezado legible: _X0023_ -> #, cualquier _xHHHH_ -> su carácter, _ -> espacio */
+function cleanHeader(k) {
+  let s = String(k);
+  s = s.replace(/^_x0023_/i, "#");
+  s = s.replace(/_x([0-9a-f]{4})_/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  s = s.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  return s;
+}
+
+/* Número seguro: vacío o no numérico => null */
+function parseNum(v) {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  const s = cleanStr(v);
+  if (!s) return null;
+  if (!/^-?[\d\s.,]+$/.test(s)) return null;
+  const n = parseFloat(s.replace(/\s/g, "").replace(",", "."));
+  return isFinite(n) ? n : null;
+}
+const toInt = v => { const n = parseNum(v); return n === null ? 0 : Math.trunc(n); };
 
 function normEstado(v) {
   const s = normKey(v);
   if (!s) return "Pendiente";
+  if (s.startsWith("reprog") || s.startsWith("posterg") || s.startsWith("aplaz")) return "Reprogramado";
   if (s.startsWith("complet") || s.startsWith("finaliz") || s.startsWith("termin") || s === "ok" || s.startsWith("listo") || s.startsWith("hecho")) return "Completado";
   if (s.includes("proceso") || s.includes("curso") || s.startsWith("inici") || s.startsWith("ejecu") || s.startsWith("progres")) return "En Proceso";
   if (s.startsWith("pend") || s.startsWith("program") || s.startsWith("porhacer") || s.startsWith("noinici")) return "Pendiente";
@@ -240,27 +231,33 @@ function normRegion(v) {
   const s = normKey(v);
   if (s.startsWith("sierra")) return "Sierra";
   if (s.startsWith("costa")) return "Costa";
+  if (s.startsWith("oriente") || s.startsWith("amazon")) return "Oriente";
+  if (s.startsWith("insular") || s.startsWith("galapagos")) return "Insular";
   const c = cleanStr(v);
   return c ? c.charAt(0).toUpperCase() + c.slice(1) : "Sin región";
 }
 
-/* Fecha: soporta serial de Excel, ISO y dd/mm/aaaa */
-function parseFecha(v) {
-  if (v === null || v === undefined || v === "") return null;
+/* Fecha: serial de Excel → dd mmm aaaa; otros formatos se dejan tal cual */
+function fmtFechaCell(v) {
   const s = cleanStr(v);
   if (/^\d+(\.\d+)?$/.test(s)) {
     const n = parseFloat(s);
-    if (n > 20000 && n < 80000) return new Date(Math.round((n - 25569) * 86400 * 1000));
+    if (n > 20000 && n < 80000) {
+      const d = new Date(Math.round((n - 25569) * 86400 * 1000));
+      return d.toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+    }
   }
-  let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
-  if (m) {
-    let y = +m[3]; if (y < 100) y += 2000;
-    return new Date(Date.UTC(y, +m[2] - 1, +m[1]));
-  }
-  const d = new Date(s);
-  return isNaN(d) ? null : d;
+  return s;
 }
-const fmtFecha = d => d ? d.toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }) : "";
+function fechaSortValue(v) {
+  const s = cleanStr(v);
+  if (!s) return Infinity;
+  if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s) * 86400000;
+  const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (m) { let y = +m[3]; if (y < 100) y += 2000; return Date.UTC(y, +m[2] - 1, +m[1]); }
+  const t = Date.parse(s);
+  return isNaN(t) ? Infinity : t;
+}
 
 /* Extrae el arreglo de filas sin importar la envoltura de Power Automate */
 function extractRows(json) {
@@ -278,35 +275,68 @@ function extractRows(json) {
   return [];
 }
 
-function cleanRow(obj) {
-  const out = { _extra: {} };
-  for (const [k, v] of Object.entries(obj || {})) {
-    if (isMetaKey(k)) continue;
-    const canon = canonKey(k);
-    if (canon) {
-      if (out[canon] === undefined || out[canon] === "") out[canon] = v;
-    } else {
-      out._extra[cleanStr(k)] = cleanStr(v);
-    }
+/* ================= Detección automática de columnas ================= */
+function buildColumns(rawRows) {
+  // 1) Llaves del primer objeto (orden original del Excel)
+  const keys = Object.keys(rawRows[0] || {}).filter(k => !isMetaKey(k));
+  // Por seguridad, añade al final llaves que aparezcan solo en filas posteriores
+  rawRows.forEach(r => Object.keys(r || {}).forEach(k => { if (!isMetaKey(k) && !keys.includes(k)) keys.push(k); }));
+
+  return keys.map(k => {
+    const vals = rawRows.map(r => cleanStr(r?.[k])).filter(v => v !== "");
+    return {
+      key: k,
+      label: cleanHeader(k),
+      norm: normKey(cleanHeader(k)),
+      isEmpty: vals.length === 0,
+      isNumeric: vals.length > 0 && vals.every(v => parseNum(v) !== null)
+    };
+  });
+}
+
+/* Primera columna cuyo nombre contenga alguna palabra clave (en orden de prioridad de las palabras) */
+function findCol(cols, words, { numeric = false, preferFilled = true } = {}) {
+  for (const w of words) {
+    let cands = cols.filter(c => c.norm.includes(w));
+    if (numeric) cands = cands.filter(c => c.isNumeric);
+    if (preferFilled && cands.some(c => !c.isEmpty)) cands = cands.filter(c => !c.isEmpty);
+    if (cands.length) return cands[0].key;
   }
-  const fechaDate = parseFecha(out.fecha);
-  // Equipos = "# CAJAS" (entero, vacío = 0). Solo si esa columna no existe se usa la antigua "EQUIPOS".
-  const equipos = ("cajas" in out) ? toInt(out.cajas) : toInt(out.equiposOld);
-  // Responsable = columna "ENCARGADO…". Respaldo: Resp. Real / Resp. Prog. si no existiera.
-  const resp = cleanStr(out.encargado) || cleanStr(out.respreal) || cleanStr(out.respprog);
+  return null;
+}
+
+function detectMapping(cols) {
+  // Cantidad: primera columna NUMÉRICA en orden del Excel que contenga CAJAS / EQUIPOS / CANTIDAD
+  const qtyCol = cols.find(c => c.isNumeric && KW.qty.some(w => c.norm.includes(w)))
+             || cols.find(c => KW.qty.some(w => c.norm.includes(w)));
   return {
-    id: cleanStr(out.id),
-    actividad: cleanStr(out.actividad),
-    localidad: cleanStr(out.localidad),
-    ciudad: cleanStr(out.ciudad),
-    region: normRegion(out.region),
-    equipos,
-    resp,
-    fechaDate,
-    fecha: fechaDate ? fmtFecha(fechaDate) : cleanStr(out.fecha),
-    estado: normEstado(out.estado),
-    _extra: out._extra
+    qty:    qtyCol ? qtyCol.key : null,
+    region: findCol(cols, KW.region),
+    estado: findCol(cols, KW.estado),
+    resp:   findCol(cols, KW.resp),
+    sede:   findCol(cols, KW.sede),
+    fecha:  findCol(cols, KW.fecha)
   };
+}
+
+function buildRows(rawRows) {
+  return rawRows.filter(r => r && typeof r === "object").map(r => {
+    const cells = {};
+    COLUMNS.forEach(c => {
+      cells[c.key] = (c.key === MAP.fecha) ? fmtFechaCell(r[c.key]) : cleanStr(r[c.key]);
+    });
+    const row = {
+      raw: r,
+      cells,
+      _qty:    MAP.qty    ? toInt(r[MAP.qty]) : 0,
+      _estado: MAP.estado ? normEstado(r[MAP.estado]) : "Pendiente",
+      _region: MAP.region ? normRegion(r[MAP.region]) : "Sin región",
+      _resp:   MAP.resp   ? (cleanStr(r[MAP.resp]) || "Sin asignar") : "Sin asignar",
+      _sede:   MAP.sede   ? cleanStr(r[MAP.sede]) : ""
+    };
+    row._search = normKey(Object.values(cells).join(" "));
+    return row;
+  }).filter(row => Object.values(row.cells).some(v => v !== ""));
 }
 
 /* ================= Conexión ================= */
@@ -343,26 +373,27 @@ async function loadData() {
     try { json = JSON.parse(text.replace(/^﻿/, "")); }
     catch { throw new Error("La respuesta no es un JSON válido"); }
 
-    const rows = extractRows(json).filter(r => r && typeof r === "object").map(cleanRow)
-      .filter(r => r.id || r.localidad || r.equipos);
+    const rawRows = extractRows(json).filter(r => r && typeof r === "object");
+    COLUMNS = buildColumns(rawRows);
+    COLUMNS.forEach(c => c.isEstado = c.norm === "estado");
+    MAP = detectMapping(COLUMNS);
+    if (MAP.estado) COLUMNS.forEach(c => { if (c.key === MAP.estado) c.isEstado = true; });
+    ROWS = buildRows(rawRows);
+    if (sortKey && !COLUMNS.some(c => c.key === sortKey)) sortKey = null;
 
-    RAW = rows;
-    const extras = new Set();
-    rows.forEach(r => Object.keys(r._extra).forEach(k => extras.add(k)));
-    EXTRA_COLS = [...extras];
-
-    populateRespFilter();
+    populateFilters();
+    showDetected();
     renderAll();
     setStatus("ok", "Sincronizado en vivo con OneDrive");
     document.getElementById("errorBanner").classList.add("hidden");
     document.getElementById("lastSync").textContent =
-      `Última sincronización: ${new Date().toLocaleString("es-EC")} · ${rows.length} registros`;
+      `Última sincronización: ${new Date().toLocaleString("es-EC")} · ${ROWS.length} registros · ${COLUMNS.length} columnas`;
   } catch (err) {
     const msg = err.name === "AbortError" ? `Tiempo de espera agotado (${FETCH_TIMEOUT_MS / 1000}s)` : err.message;
     setStatus("error", "Error de conexión");
     const banner = document.getElementById("errorBanner");
     banner.textContent = `No se pudo obtener el cronograma: ${msg}. ` +
-      (RAW.length ? "Se muestran los últimos datos cargados." : "Verifica tu conexión y presiona «Actualizar Datos».");
+      (ROWS.length ? "Se muestran los últimos datos cargados." : "Verifica tu conexión y presiona «Actualizar Datos».");
     banner.classList.remove("hidden");
   } finally {
     clearTimeout(slowTimer); clearTimeout(killTimer);
@@ -372,24 +403,33 @@ async function loadData() {
   }
 }
 
-/* ================= Filtros ================= */
-function populateRespFilter() {
-  const sel = document.getElementById("fResp");
-  const current = sel.value;
-  const names = new Set();
-  RAW.forEach(r => { if (r.resp) names.add(r.resp); });
-  sel.innerHTML = '<option value="">Todos</option>';
-  [...names].sort((a, b) => a.localeCompare(b, "es")).forEach(n => {
-    const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o);
-  });
-  if ([...names].includes(current)) sel.value = current;
+function showDetected() {
+  const lbl = k => k ? (COLUMNS.find(c => c.key === k)?.label || k) : "no encontrada";
+  document.getElementById("detectedCols").textContent =
+    `Columnas detectadas → Cantidad: ${lbl(MAP.qty)} · Región: ${lbl(MAP.region)} · Estado: ${lbl(MAP.estado)} · Responsable: ${lbl(MAP.resp)} · Sede: ${lbl(MAP.sede)}`;
+}
 
-  // Agrega regiones no previstas (si existieran)
-  const rSel = document.getElementById("fRegion");
-  const have = new Set([...rSel.options].map(o => o.value));
-  [...new Set(RAW.map(r => r.region))].forEach(r => {
-    if (!have.has(r)) { const o = document.createElement("option"); o.value = r; o.textContent = r; rSel.appendChild(o); }
-  });
+/* ================= Filtros ================= */
+function fillSelect(id, allLabel, values) {
+  const sel = document.getElementById(id);
+  const current = sel.value;
+  sel.innerHTML = "";
+  const o0 = document.createElement("option"); o0.value = ""; o0.textContent = allLabel; sel.appendChild(o0);
+  values.forEach(v => { const o = document.createElement("option"); o.value = v; o.textContent = v; sel.appendChild(o); });
+  sel.value = values.includes(current) ? current : "";
+}
+
+function populateFilters() {
+  const uniq = arr => [...new Set(arr)].sort((a, b) => a.localeCompare(b, "es"));
+  const regiones = uniq(ROWS.map(r => r._region));
+  const ordenRegion = ["Sierra", "Costa"];
+  fillSelect("fRegion", "Todas", [...ordenRegion.filter(r => regiones.includes(r)), ...regiones.filter(r => !ordenRegion.includes(r))]);
+
+  const estadosData = new Set(ROWS.map(r => r._estado));
+  fillSelect("fEstado", "Todos", [...ESTADOS.filter(e => e !== "Reprogramado" || estadosData.has(e)),
+                                  ...[...estadosData].filter(e => !ESTADOS.includes(e))]);
+
+  fillSelect("fResp", "Todos", uniq(ROWS.map(r => r._resp)));
 }
 
 function getFiltered() {
@@ -397,11 +437,11 @@ function getFiltered() {
   const reg = document.getElementById("fRegion").value;
   const est = document.getElementById("fEstado").value;
   const resp = document.getElementById("fResp").value;
-  return RAW.filter(r =>
-    (!reg || r.region === reg) &&
-    (!est || r.estado === est) &&
-    (!resp || r.resp === resp) &&
-    (!q || normKey(r.localidad).includes(q) || normKey(r.id).includes(q) || normKey(r.ciudad).includes(q))
+  return ROWS.filter(r =>
+    (!reg || r._region === reg) &&
+    (!est || r._estado === est) &&
+    (!resp || r._resp === resp) &&
+    (!q || r._search.includes(q))
   );
 }
 
@@ -413,22 +453,21 @@ function renderAll() {
   renderKPIs(data);
   renderCharts(data);
   renderTable(data);
-  const f = data.length !== RAW.length;
-  document.getElementById("filterInfo").textContent = f
-    ? `Mostrando ${data.length} de ${RAW.length} sedes (filtros activos)`
-    : `Mostrando las ${RAW.length} sedes`;
+  document.getElementById("filterInfo").textContent = data.length !== ROWS.length
+    ? `Mostrando ${data.length} de ${ROWS.length} registros (filtros activos)`
+    : `Mostrando los ${ROWS.length} registros`;
 }
 
 function renderKPIs(data) {
-  const sedes = new Set(data.map(r => normKey(r.localidad) || r.id)).size;
-  const total = data.reduce((s, r) => s + r.equipos, 0);
-  const comp = data.filter(r => r.estado === "Completado").reduce((s, r) => s + r.equipos, 0);
-  const proc = data.filter(r => r.estado === "En Proceso").reduce((s, r) => s + r.equipos, 0);
+  const sedes = MAP.sede ? new Set(data.map(r => normKey(r._sede)).filter(Boolean)).size : data.length;
+  const total = data.reduce((s, r) => s + r._qty, 0);
+  const comp = data.filter(r => r._estado === "Completado").reduce((s, r) => s + r._qty, 0);
+  const proc = data.filter(r => r._estado === "En Proceso").reduce((s, r) => s + r._qty, 0);
   const pct = total ? (comp / total) * 100 : 0;
-  const sedesComp = data.filter(r => r.estado === "Completado").length;
+  const sedesComp = data.filter(r => r._estado === "Completado").length;
 
   document.getElementById("kpiSedes").textContent = fmtInt(sedes);
-  document.getElementById("kpiSedesSub").textContent = `${sedesComp} sedes completadas`;
+  document.getElementById("kpiSedesSub").textContent = `${sedesComp} registros completados`;
   document.getElementById("kpiEquipos").textContent = fmtInt(total);
   document.getElementById("kpiEquiposSub").textContent = `${fmtInt(proc)} en proceso`;
   document.getElementById("kpiCompletados").textContent = fmtInt(comp);
@@ -441,149 +480,152 @@ function renderCharts(data) {
   if (typeof Chart === "undefined") return;
 
   // --- Barras apiladas por estado ---
-  const keyFn = groupBy === "region" ? r => r.region : r => (r.resp || "Sin asignar");
+  const keyFn = groupBy === "region" ? r => r._region : r => r._resp;
   const groups = [...new Set(data.map(keyFn))].sort((a, b) => a.localeCompare(b, "es"));
-  const estadosPresentes = [...ESTADOS, ...new Set(data.map(r => r.estado).filter(e => !ESTADOS.includes(e)))];
+  const estadosPresentes = [...ESTADOS, ...new Set(data.map(r => r._estado).filter(e => !ESTADOS.includes(e)))];
+  const horizontal = groupBy === "resp" && groups.length > 6;
   const datasets = estadosPresentes.map(est => ({
     label: est,
-    data: groups.map(g => data.filter(r => keyFn(r) === g && r.estado === est).reduce((s, r) => s + r.equipos, 0)),
+    data: groups.map(g => data.filter(r => keyFn(r) === g && r._estado === est).reduce((s, r) => s + r._qty, 0)),
     backgroundColor: ESTADO_COLOR[est] || ESTADO_COLOR.Otro,
     borderRadius: 4, maxBarThickness: 56
   })).filter(ds => ds.data.some(v => v > 0));
 
-  const barCfg = {
+  if (barChart) barChart.destroy();
+  barChart = new Chart(document.getElementById("barChart"), {
     type: "bar",
     data: { labels: groups, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
-      indexAxis: groupBy === "resp" && groups.length > 6 ? "y" : "x",
+      indexAxis: horizontal ? "y" : "x",
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 8 } },
-        tooltip: { callbacks: { footer: items => "Total: " + fmtInt(items.reduce((s, i) => s + i.parsed[groupBy === "resp" && groups.length > 6 ? "x" : "y"], 0)) + " equipos" } }
+        tooltip: { callbacks: { footer: items => "Total: " + fmtInt(items.reduce((s, i) => s + i.parsed[horizontal ? "x" : "y"], 0)) + " equipos" } }
       },
       scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, grid: { color: "#e2e8f0" } } }
     }
-  };
-  if (barChart) barChart.destroy();
-  barChart = new Chart(document.getElementById("barChart"), barCfg);
+  });
 
   // --- Doughnut de estados ---
-  const counts = estadosPresentes.map(e => data.filter(r => r.estado === e).length);
-  const eqs = estadosPresentes.map(e => data.filter(r => r.estado === e).reduce((s, r) => s + r.equipos, 0));
-  const totalSedes = counts.reduce((a, b) => a + b, 0);
-  const dCfg = {
+  const estDon = estadosPresentes.filter(e => data.some(r => r._estado === e));
+  const counts = estDon.map(e => data.filter(r => r._estado === e).length);
+  const eqs = estDon.map(e => data.filter(r => r._estado === e).reduce((s, r) => s + r._qty, 0));
+  const totalReg = counts.reduce((a, b) => a + b, 0);
+
+  if (doughnutChart) doughnutChart.destroy();
+  doughnutChart = new Chart(document.getElementById("doughnutChart"), {
     type: "doughnut",
     data: {
-      labels: estadosPresentes,
-      datasets: [{ data: counts, backgroundColor: estadosPresentes.map(e => ESTADO_COLOR[e] || ESTADO_COLOR.Otro), borderWidth: 2, borderColor: "#fff" }]
+      labels: estDon,
+      datasets: [{ data: counts, backgroundColor: estDon.map(e => ESTADO_COLOR[e] || ESTADO_COLOR.Otro), borderWidth: 2, borderColor: "#fff" }]
     },
     options: {
       responsive: true, maintainAspectRatio: false, cutout: "62%",
       plugins: {
         legend: { position: "bottom", labels: { usePointStyle: true, boxWidth: 8 } },
         tooltip: { callbacks: { label: c => {
-          const pct = totalSedes ? (c.raw / totalSedes * 100).toFixed(1) : 0;
+          const pct = totalReg ? (c.raw / totalReg * 100).toFixed(1) : 0;
           return ` ${c.label}: ${c.raw} sedes (${pct}%) · ${fmtInt(eqs[c.dataIndex])} equipos`;
         } } }
       },
       onClick: (_, els) => {
         if (!els.length) return;
-        const est = estadosPresentes[els[0].index];
+        const est = estDon[els[0].index];
         const sel = document.getElementById("fEstado");
         sel.value = sel.value === est ? "" : est;
         renderAll();
       }
     }
-  };
-  if (doughnutChart) doughnutChart.destroy();
-  doughnutChart = new Chart(document.getElementById("doughnutChart"), dCfg);
+  });
 }
 
-function tableColumns() {
-  // Solo las columnas reales del Excel; las antiguas/vacías (EQUIPOS, RESP. PROG., RESP. REAL) y metadatos quedan ocultas
-  return COLS.map(c => ({ key: c.key, label: c.label }));
+/* ---------- Tabla 100% dinámica ---------- */
+function visibleColumns() {
+  const hideEmpty = document.getElementById("hideEmpty").checked;
+  return COLUMNS.filter(c => !(hideEmpty && c.isEmpty));
 }
 
-function cellValue(r, key) {
-  if (key.startsWith("x:")) return r._extra[key.slice(2)] ?? "";
-  return r[key];
-}
-
-function sortValue(r, key) {
-  if (key === "fecha") return r.fechaDate ? r.fechaDate.getTime() : Infinity;
-  if (key === "equipos") return r.equipos;
-  if (key === "id") { const n = parseFloat(r.id); return isNaN(n) ? r.id : n; }
-  return String(cellValue(r, key) ?? "").toLowerCase();
+function sortValue(row, col) {
+  const v = row.cells[col.key];
+  if (col.key === MAP.fecha) return fechaSortValue(row.raw[col.key]);
+  if (col.isNumeric) { const n = parseNum(v); return n === null ? -Infinity : n; }
+  return String(v).toLowerCase();
 }
 
 function renderTable(data) {
-  const cols = tableColumns();
+  const cols = visibleColumns();
   const head = document.getElementById("tblHead");
   head.innerHTML = "";
   const tr = document.createElement("tr");
   cols.forEach(c => {
     const th = document.createElement("th");
-    th.className = "sortable px-4 py-3 text-left font-semibold whitespace-nowrap" + (c.key === "equipos" ? " text-right" : "");
+    th.className = "sortable px-4 py-3 text-left font-semibold whitespace-nowrap" + (c.isNumeric ? " text-right" : "");
     th.textContent = c.label + (sortKey === c.key ? (sortDir > 0 ? " ▲" : " ▼") : "");
+    th.title = `Columna original: ${c.key}`;
     th.onclick = () => { if (sortKey === c.key) sortDir *= -1; else { sortKey = c.key; sortDir = 1; } renderTable(getFiltered()); };
     tr.appendChild(th);
   });
   head.appendChild(tr);
 
-  const sorted = [...data].sort((a, b) => {
-    const va = sortValue(a, sortKey), vb = sortValue(b, sortKey);
-    if (typeof va === "number" && typeof vb === "number") return (va - vb) * sortDir;
-    return String(va).localeCompare(String(vb), "es", { numeric: true }) * sortDir;
-  });
+  let sorted = [...data];
+  const sortCol = COLUMNS.find(c => c.key === sortKey);
+  if (sortCol) {
+    sorted.sort((a, b) => {
+      const va = sortValue(a, sortCol), vb = sortValue(b, sortCol);
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * sortDir;
+      return String(va).localeCompare(String(vb), "es", { numeric: true }) * sortDir;
+    });
+  }
 
   const body = document.getElementById("tblBody");
   body.innerHTML = "";
   if (!sorted.length) {
     const r = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = cols.length; td.className = "px-4 py-10 text-center text-slate-400";
-    td.textContent = RAW.length ? "Ninguna sede coincide con los filtros." : "Sin datos cargados.";
+    td.colSpan = Math.max(cols.length, 1); td.className = "px-4 py-10 text-center text-slate-400";
+    td.textContent = ROWS.length ? "Ningún registro coincide con los filtros." : "Sin datos cargados.";
     r.appendChild(td); body.appendChild(r);
   }
+
   sorted.forEach(r => {
     const row = document.createElement("tr");
     row.className = "hover:bg-amber-50/60";
     cols.forEach(c => {
       const td = document.createElement("td");
       td.className = "px-4 py-2.5 whitespace-nowrap";
-      if (c.key === "estado") {
+      const val = r.cells[c.key];
+      if (c.isEstado) {
+        const est = normEstado(val);
         const span = document.createElement("span");
-        span.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 " + (ESTADO_BADGE[r.estado] || ESTADO_BADGE.Otro);
+        span.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ring-1 " + (ESTADO_BADGE[est] || ESTADO_BADGE.Otro);
         const dot = document.createElement("span");
         dot.className = "w-1.5 h-1.5 rounded-full";
-        dot.style.background = ESTADO_COLOR[r.estado] || ESTADO_COLOR.Otro;
+        dot.style.background = ESTADO_COLOR[est] || ESTADO_COLOR.Otro;
         span.appendChild(dot);
-        span.appendChild(document.createTextNode(r.estado));
+        span.appendChild(document.createTextNode(val || est));
         td.appendChild(span);
-      } else if (c.key === "equipos") {
-        td.className += " text-right font-semibold tabular-nums";
-        td.textContent = fmtInt(r.equipos);
-      } else if (c.key === "region") {
-        td.textContent = r.region;
-        td.className += r.region === "Sierra" ? " text-indigo-700" : r.region === "Costa" ? " text-cyan-700" : "";
-      } else if (c.key === "localidad") {
-        td.className += " font-medium text-slate-900";
-        td.textContent = r.localidad;
+      } else if (c.isNumeric) {
+        td.className += " text-right tabular-nums" + (c.key === MAP.qty ? " font-semibold" : "");
+        td.textContent = val;
       } else {
-        td.textContent = cellValue(r, c.key) ?? "";
+        if (c.key === MAP.sede) td.className += " font-medium text-slate-900";
+        if (c.key === MAP.region) td.className += r._region === "Sierra" ? " text-indigo-700" : r._region === "Costa" ? " text-cyan-700" : "";
+        td.textContent = val;   // textContent: los valores del Excel nunca se interpretan como HTML
       }
       row.appendChild(td);
     });
     body.appendChild(row);
   });
-  const total = sorted.reduce((s, r) => s + r.equipos, 0);
-  document.getElementById("tableCount").textContent = `${sorted.length} sedes · ${fmtInt(total)} equipos`;
+
+  const total = sorted.reduce((s, r) => s + r._qty, 0);
+  document.getElementById("tableCount").textContent = `${sorted.length} registros · ${fmtInt(total)} equipos`;
 }
 
 /* ================= Eventos ================= */
 document.getElementById("btnRefresh").addEventListener("click", loadData);
 ["fRegion", "fEstado", "fResp"].forEach(id => document.getElementById(id).addEventListener("change", renderAll));
+document.getElementById("hideEmpty").addEventListener("change", () => renderTable(getFiltered()));
 let searchT;
 document.getElementById("fSearch").addEventListener("input", () => { clearTimeout(searchT); searchT = setTimeout(renderAll, 150); });
 document.getElementById("btnClear").addEventListener("click", () => {
